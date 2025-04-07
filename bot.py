@@ -122,7 +122,8 @@ async def mode_selection(update: telegram.Update, context: CallbackContext, chat
     keyboard = [
         [InlineKeyboardButton("Pending Mode", callback_data=f'mode_pending_{chat_id}')],
         [InlineKeyboardButton("Recent Mode", callback_data=f'mode_recent_{chat_id}')],
-        [InlineKeyboardButton("Magic Wand", callback_data=f'wand_{chat_id}')]
+        [InlineKeyboardButton("Magic Wand", callback_data=f'wand_{chat_id}')],
+        [InlineKeyboardButton("Retry Magic", callback_data=f'retry_{chat_id}')]  # Magical fallback
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -130,16 +131,17 @@ async def mode_selection(update: telegram.Update, context: CallbackContext, chat
         "Choose your path:\n"
         "- Pending Mode: Unveil and approve lost souls\n"
         "- Recent Mode: Greet new spirits instantly\n"
-        "- Magic Wand: Toggle modes with a flick!",
+        "- Magic Wand: Toggle modes with a flick!\n"
+        "- Retry Magic: Recast if the spell falters!",
         reply_markup=reply_markup
     )
-    logger.debug(f"Displayed mode selection for chat {chat_id} to user {update.message.from_user.id}, buttons: {keyboard}")
+    logger.debug(f"Sent mode selection for chat {chat_id} to user {update.message.from_user.id}, callback_data: {[[btn.callback_data for btn in row] for row in keyboard]}")
 
 async def mode_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Handle mode selection."""
     query = update.callback_query
     await query.answer()
-    logger.debug(f"Received callback query from user {query.from_user.id}: {query.data}")
+    logger.debug(f"Received mode callback from user {query.from_user.id}: {query.data}")
     try:
         mode, chat_id = query.data.split('_')[1], int(query.data.split('_')[2])
         data['mode'] = mode
@@ -152,8 +154,8 @@ async def mode_callback(update: telegram.Update, context: CallbackContext) -> No
         if mode == 'pending':
             await check_pending_requests(context, chat_id, query.from_user.id)
     except (IndexError, ValueError) as e:
-        logger.error(f"Error parsing callback data {query.data}: {e}")
-        await query.edit_message_text("💥 The spell misfired! Try again, seeker.")
+        logger.error(f"Error parsing mode callback data {query.data}: {e}")
+        await query.edit_message_text("💥 The spell misfired! Try 'Retry Magic'.")
 
 async def wand_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Toggle mode with a magic wand."""
@@ -165,10 +167,12 @@ async def wand_callback(update: telegram.Update, context: CallbackContext) -> No
         data['mode'] = 'recent' if data['mode'] == 'pending' else 'pending'
         save_data(data)
         await query.edit_message_text(f"🪄 Wand waved! Mode switched to {data['mode']} for {chat_id}!")
-        logger.info(f"User {query.from_user.id} toggled mode to {data['mode']} for chat {chat_id}")
+        
+   
+logger.info(f"User {query.from_user.id} toggled mode to {data['mode']} for chat {chat_id}")
     except (IndexError, ValueError) as e:
         logger.error(f"Error parsing wand callback data {query.data}: {e}")
-        await query.edit_message_text("💥 Wand malfunction! Try again.")
+        await query.edit_message_text("💥 Wand malfunction! Try 'Retry Magic'.")
 
 async def stop_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Stop request processing."""
@@ -188,6 +192,20 @@ async def stop_callback(update: telegram.Update, context: CallbackContext) -> No
     except ValueError as e:
         logger.error(f"Error parsing stop callback data {query.data}: {e}")
         await query.edit_message_text("💥 Stop spell failed! Try again.")
+
+async def retry_callback(update: telegram.Update, context: CallbackContext) -> None:
+    """Retry mode selection if buttons fail."""
+    query = update.callback_query
+    await query.answer()
+    logger.debug(f"Received retry callback from user {query.from_user.id}: {query.data}")
+    try:
+        chat_id = int(query.data.split('_')[1])
+        await query.edit_message_text(f"🔄 Recasting the spell for {chat_id}...")
+        await mode_selection(query.message, context, chat_id)
+        logger.info(f"User {query.from_user.id} retried mode selection for chat {chat_id}")
+    except (IndexError, ValueError) as e:
+        logger.error(f"Error parsing retry callback data {query.data}: {e}")
+        await query.edit_message_text("💥 Retry failed! Contact the wizard.")
 
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
@@ -326,7 +344,7 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
         return
     
     # Simulate pending count (replace with real API call when available)
-    pending_count = pending_counts.get(chat_id, 0)  # Placeholder until Telegram API supports this
+    pending_count = pending_counts.get(chat_id, 0)
     logger.info(f"🔍 Detected {pending_count} pending requests in chat {chat_id} (simulated)")
     
     if pending_count == 0:
@@ -347,16 +365,23 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
             stop_processing[chat_id] = False
             logger.info(f"Pending request processing stopped at {approved}/{pending_count} for chat {chat_id}")
             return
-        await asyncio.sleep(0.5)  # 2 requests/second
+        await asyncio.sleep(0.5)
         approved += 1
         await status_msg.edit_text(f"🌠 Unveiling souls in {chat_id}: {approved}/{pending_count}")
         logger.info(f"Approved pending request {approved}/{pending_count} in chat {chat_id}")
         
         if approved % 10 == 0:
-            await asyncio.sleep(2)  # Pause for dramatic effect
+            await asyncio.sleep(2)
     
     await status_msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
     logger.info(f"Finished approving {approved} pending requests in chat {chat_id}")
+
+async def debug_callback(update: telegram.Update, context: CallbackContext) -> None:
+    """Catch-all callback handler for debugging."""
+    query = update.callback_query
+    await query.answer()
+    logger.debug(f"Caught unhandled callback from user {query.from_user.id}: {query.data}")
+    await query.edit_message_text(f"🔍 Uncharted magic detected: {query.data}\nTry 'Retry Magic' or contact the wizard!")
 
 async def error_handler(update: telegram.Update, context: CallbackContext) -> None:
     """Log errors."""
@@ -380,7 +405,8 @@ def main() -> None:
     application.add_handler(telegram.ext.CallbackQueryHandler(mode_callback, pattern=r'mode_(pending|recent)_\d+'))
     application.add_handler(telegram.ext.CallbackQueryHandler(wand_callback, pattern=r'wand_\d+'))
     application.add_handler(telegram.ext.CallbackQueryHandler(stop_callback, pattern=r'stop(_\d+)?'))
-    application.add_handler(telegram.ext.CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern='noop'))
+    application.add_handler(telegram.ext.CallbackQueryHandler(retry_callback, pattern=r'retry_\d+'))
+    application.add_handler(telegram.ext.CallbackQueryHandler(debug_callback))  # Catch-all for unhandled callbacks
 
     # Error handler
     application.add_error_handler(error_handler)
