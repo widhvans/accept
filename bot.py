@@ -5,8 +5,6 @@ import logging
 import asyncio
 import json
 import os
-import random
-import uuid
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Dict
 
@@ -32,7 +30,7 @@ logger = logging.getLogger(__name__)
 stop_processing: Dict[int, bool] = {}
 pending_counts: Dict[int, int] = {}
 dashboard_msg_ids: Dict[int, Dict[int, int]] = {}  # user_id -> chat_id -> message_id
-dashboard_nonces: Dict[int, str] = {}  # chat_id -> nonce
+pending_tasks: Dict[int, asyncio.Task] = {}  # Track pending request tasks
 
 # Load or initialize data
 def load_data():
@@ -58,13 +56,12 @@ async def start(update: telegram.Update, context: CallbackContext) -> None:
     bot_username = context.bot.username
     keyboard = [
         [InlineKeyboardButton("Add to Group/Channel", url=f"https://t.me/{bot_username}?startgroup=true")],
-        [InlineKeyboardButton("Connect Your Channel", callback_data='connect_channel')],
-        [InlineKeyboardButton("Help", callback_data='help')]
+        [InlineKeyboardButton("Connect Your Channel", callback_data='connect_channel')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_msg = (
-        f"🌌 Welcome, {user.first_name}, to the Singularity of {context.bot.first_name}!\n"
-        "Forward this in private to bind a chat, or summon a channel with 'Connect Your Channel'!"
+        f"🌌 Welcome, {user.first_name}, to the Cosmic Core of {context.bot.first_name}!\n"
+        "Forward this in private to bind a chat, or tap 'Connect Your Channel'!"
     )
     msg = await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
     data['last_msg_id'] = msg.message_id
@@ -75,73 +72,29 @@ async def connect_channel_callback(update: telegram.Update, context: CallbackCon
     """Prompt user to forward channel message."""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("🔮 Cast a singularity spell! Forward a channel message to me in private!")
+    await query.edit_message_text("🔮 Cast a cosmic spell! Forward a channel message to me in private!")
     logger.debug(f"User {query.from_user.id} triggered connect_channel_callback")
 
-async def help_callback(update: telegram.Update, context: CallbackContext) -> None:
-    """Show help menu."""
-    query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("/setmode <pending|recent>", callback_data='noop')],
-        [InlineKeyboardButton("/setdelay <seconds>", callback_data='noop')],
-        [InlineKeyboardButton("/status", callback_data='noop')],
-        [InlineKeyboardButton("Back to Start", callback_data='start')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    help_msg = (
-        "✨ Singularity Commands:\n"
-        "/setmode <pending|recent> - Warp reality\n"
-        "/setdelay <seconds> - Bend time\n"
-        "/status - Gaze into the void"
-    )
-    await query.edit_message_text(help_msg, reply_markup=reply_markup)
-    logger.debug(f"User {query.from_user.id} triggered help_callback")
-
-async def start_callback(update: telegram.Update, context: CallbackContext) -> None:
-    """Return to start menu."""
-    query = update.callback_query
-    await query.answer()
-    bot_username = context.bot.username
-    keyboard = [
-        [InlineKeyboardButton("Add to Group/Channel", url=f"https://t.me/{bot_username}?startgroup=true")],
-        [InlineKeyboardButton("Connect Your Channel", callback_data='connect_channel')],
-        [InlineKeyboardButton("Help", callback_data='help')]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    welcome_msg = (
-        f"🌌 Returned, seeker? I’m {context.bot.first_name}.\n"
-        "Forward this to bind a chat, or summon a channel!"
-    )
-    await query.edit_message_text(welcome_msg, reply_markup=reply_markup)
-    logger.debug(f"User {query.from_user.id} triggered start_callback")
-
-async def update_dashboard(context: CallbackContext, chat_id: int, user_id: int, regenerate: bool = False) -> None:
-    """Update the self-regenerating singularity dashboard."""
+async def update_dashboard(context: CallbackContext, chat_id: int, user_id: int) -> None:
+    """Update the minimalist cosmic dashboard."""
     mode = data['mode'] or "Unchosen"
     pending_count = pending_counts.get(chat_id, 0)
-    nonce = dashboard_nonces.get(chat_id, str(uuid.uuid4())[:8])
-    if regenerate:
-        nonce = str(uuid.uuid4())[:8]
-        dashboard_nonces[chat_id] = nonce
     keyboard = [
-        [InlineKeyboardButton(f"{'★ ' if mode == 'pending' else ''}Pending", callback_data=f'mode_pending_{chat_id}_{nonce}')],
-        [InlineKeyboardButton(f"{'★ ' if mode == 'recent' else ''}Recent", callback_data=f'mode_recent_{chat_id}_{nonce}')],
-        [InlineKeyboardButton("Wand", callback_data=f'wand_{chat_id}_{nonce}'), InlineKeyboardButton("Singularity", callback_data=f'singularity_{chat_id}_{nonce}')],
-        [InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}_{nonce}'), InlineKeyboardButton("Cosmic Reset", callback_data=f'reset_{chat_id}_{nonce}')]
+        [InlineKeyboardButton(f"{'★ ' if mode == 'pending' else ''}Pending", callback_data=f'mode_pending_{chat_id}')],
+        [InlineKeyboardButton(f"{'★ ' if mode == 'recent' else ''}Recent", callback_data=f'mode_recent_{chat_id}')],
+        [InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     dashboard_msg = (
-        f"🌌 **Singularity Dashboard: {chat_id}**\n"
+        f"🌌 **Cosmic Core: {chat_id}**\n"
         f"✨ Mode: {mode}\n"
         f"⏳ Delay: {data['delay']}s\n"
-        f"🔍 Pending: {pending_count}\n"
-        f"🌠 Pulse: {'🔴' if random.randint(0, 1) else '🟢'}"
+        f"🔍 Pending: {pending_count}"
     )
     user_dashboards = dashboard_msg_ids.setdefault(user_id, {})
     message_id = user_dashboards.get(chat_id)
     try:
-        if message_id and not regenerate:
+        if message_id:
             await context.bot.edit_message_text(
                 chat_id=user_id,
                 message_id=message_id,
@@ -149,7 +102,7 @@ async def update_dashboard(context: CallbackContext, chat_id: int, user_id: int,
                 reply_markup=reply_markup,
                 parse_mode='Markdown'
             )
-            logger.debug(f"Updated dashboard for {chat_id}, user {user_id}, message_id: {message_id}, nonce: {nonce}")
+            logger.debug(f"Updated dashboard for {chat_id}, user {user_id}, message_id: {message_id}")
         else:
             msg = await context.bot.send_message(
                 chat_id=user_id,
@@ -158,78 +111,48 @@ async def update_dashboard(context: CallbackContext, chat_id: int, user_id: int,
                 parse_mode='Markdown'
             )
             user_dashboards[chat_id] = msg.message_id
-            logger.debug(f"Sent new dashboard for {chat_id}, user {user_id}, message_id: {msg.message_id}, nonce: {nonce}")
-        # Auto-regenerate every 5 seconds
-        asyncio.create_task(regenerate_dashboard(context, chat_id, user_id))
+            logger.debug(f"Sent new dashboard for {chat_id}, user {user_id}, message_id: {msg.message_id}")
     except telegram.error.TelegramError as e:
         logger.error(f"Failed dashboard update for {chat_id}, user {user_id}: {e}")
-        await asyncio.sleep(1)
-        await update_dashboard(context, chat_id, user_id, regenerate=True)
-
-async def regenerate_dashboard(context: CallbackContext, chat_id: int, user_id: int) -> None:
-    """Auto-regenerate dashboard periodically."""
-    await asyncio.sleep(5)
-    if chat_id in data['chats']:
-        await update_dashboard(context, chat_id, user_id)
+        await context.bot.send_message(chat_id=user_id, text="💥 Cosmic glitch! Try reconnecting.")
 
 async def handle_callback(update: telegram.Update, context: CallbackContext) -> None:
-    """Quantum Callback Engine."""
+    """Cosmic Callback Engine."""
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    logger.debug(f"Quantum callback from user {user_id}: {query.data}")
+    logger.debug(f"Callback from user {user_id}: {query.data}")
     try:
         parts = query.data.split('_')
         action, chat_id = parts[0], int(parts[1])
-        nonce = parts[2] if len(parts) > 2 else None
-        logger.debug(f"Parsed: action={action}, chat_id={chat_id}, nonce={nonce}")
+        logger.debug(f"Parsed: action={action}, chat_id={chat_id}")
 
         if action == 'mode':
             mode = parts[1]
             data['mode'] = mode
             save_data(data)
+            if mode == 'pending' and pending_tasks.get(chat_id):
+                pending_tasks[chat_id].cancel()
             await update_dashboard(context, chat_id, user_id)
             logger.info(f"User {user_id} set mode to {mode} for {chat_id}")
             if mode == 'pending':
-                await check_pending_requests(context, chat_id, user_id)
-        
-        elif action == 'wand':
-            data['mode'] = 'recent' if data['mode'] == 'pending' else 'pending'
-            save_data(data)
-            await update_dashboard(context, chat_id, user_id)
-            logger.info(f"User {user_id} toggled mode to {data['mode']} for {chat_id}")
-        
-        elif action == 'singularity':
-            data['mode'] = 'pending'  # Singularity mode is pending at lightspeed
-            save_data(data)
-            await query.edit_message_text("🌟 Singularity Mode engaged! Processing at lightspeed...")
-            await asyncio.sleep(1)
-            await update_dashboard(context, chat_id, user_id)
-            await check_pending_requests(context, chat_id, user_id)
-            logger.info(f"User {user_id} activated singularity mode for {chat_id}")
+                task = asyncio.create_task(check_pending_requests(context, chat_id, user_id))
+                pending_tasks[chat_id] = task
         
         elif action == 'stop':
             stop_processing[chat_id] = True
+            if pending_tasks.get(chat_id):
+                pending_tasks[chat_id].cancel()
+                del pending_tasks[chat_id]
             await update_dashboard(context, chat_id, user_id)
             logger.info(f"User {user_id} stopped processing for {chat_id}")
         
-        elif action == 'reset':
-            await query.edit_message_text("🌠 Cosmic Reset initiated! Realigning the universe...")
-            data['mode'] = None
-            stop_processing[chat_id] = False
-            dashboard_nonces[chat_id] = str(uuid.uuid4())[:8]
-            save_data(data)
-            await asyncio.sleep(1)
-            await update_dashboard(context, chat_id, user_id, regenerate=True)
-            logger.info(f"User {user_id} reset dashboard for {chat_id}")
-        
         else:
             logger.warning(f"Unknown action {action} from user {user_id}")
-            await query.edit_message_text("💥 Unknown quantum event! Try 'Cosmic Reset'.")
+            await query.edit_message_text("💥 Unknown cosmic signal!")
     except (IndexError, ValueError) as e:
         logger.error(f"Error parsing callback {query.data}: {e}")
-        await query.edit_message_text("💥 Quantum collapse! Try 'Cosmic Reset'.")
-        await update_dashboard(context, chat_id, user_id, regenerate=True)
+        await query.edit_message_text("💥 Cosmic error! Try again.")
 
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
@@ -286,7 +209,7 @@ async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     
     data['mode'] = context.args[0]
     save_data(data)
-    await update.message.reply_text(f"🌟 Mode woven to: {data['mode']}")
+    await update.message.reply_text(f"🌟 Mode set to: {data['mode']}")
     logger.info(f"User {user_id} set mode to {data['mode']}")
 
 async def setdelay(update: telegram.Update, context: CallbackContext) -> None:
@@ -304,19 +227,19 @@ async def setdelay(update: telegram.Update, context: CallbackContext) -> None:
     
     data['delay'] = int(context.args[0])
     save_data(data)
-    await update.message.reply_text(f"⏳ Time bent to {data['delay']} seconds")
+    await update.message.reply_text(f"⏳ Delay set to {data['delay']} seconds")
     logger.info(f"User {user_id} set delay to {data['delay']} seconds")
 
 async def status(update: telegram.Update, context: CallbackContext) -> None:
     """Show bot status."""
     user_id = update.message.from_user.id
     if not data['chats']:
-        await update.message.reply_text("🌑 No realms bound yet!")
+        await update.message.reply_text("🌑 No chats bound yet!")
         logger.warning(f"User {user_id} checked status with no chats")
         return
     
-    chats = "\n".join([f"- {chat} ({pending_counts.get(chat, 0)} souls)" for chat in data['chats']]) or "None"
-    msg = f"🌌 Singularity Status:\nMode: {data['mode'] or 'Unchosen'}\n⏳ Delay: {data['delay']}s\n✨ Realms:\n{chats}"
+    chats = "\n".join([f"- {chat} ({pending_counts.get(chat, 0)} pending)" for chat in data['chats']]) or "None"
+    msg = f"🌌 Cosmic Status:\nMode: {data['mode'] or 'Unchosen'}\n⏳ Delay: {data['delay']}s\n✨ Chats:\n{chats}"
     await update.message.reply_text(msg)
     logger.info(f"User {user_id} checked status: {msg}")
 
@@ -331,7 +254,7 @@ async def accept_join_request(update: telegram.Update, context: CallbackContext)
     user_id = join_request.from_user.id
     
     stop_processing[chat_id] = False
-    keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}_{str(uuid.uuid4())[:8]}')]]
+    keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     status_msg = await context.bot.send_message(chat_id=user_id, text=f"🌟 Opening gates to {chat_id}...", reply_markup=reply_markup)
     await asyncio.sleep(data['delay'])
@@ -360,7 +283,7 @@ async def handle_chat_member(update: telegram.Update, context: CallbackContext) 
             logger.info(f"Bot added to chat {chat_id}")
 
 async def check_pending_requests(context: CallbackContext, chat_id: int, admin_chat_id: int) -> None:
-    """Process pending requests at lightspeed in Singularity Mode."""
+    """Process pending requests with stop control."""
     if data['mode'] != 'pending' or chat_id not in data['chats']:
         logger.debug(f"Pending mode not active or chat not bound: mode={data['mode']}, chat={chat_id}")
         return
@@ -373,21 +296,28 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
         return
     
     stop_processing[chat_id] = False
-    keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}_{str(uuid.uuid4())[:8]}')]]
+    keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     status_msg = await context.bot.send_message(chat_id=admin_chat_id, text=f"🌠 Unveiling {pending_count} souls in {chat_id}...", reply_markup=reply_markup)
     approved = 0
-    speed = 0.1 if data['mode'] == 'pending' and 'singularity' in data.get('last_action', '') else 0.5
-    for i in range(pending_count):
-        if stop_processing.get(chat_id, False):
-            await status_msg.edit_text(f"🛑 Paused at {approved}/{pending_count} souls!")
-            stop_processing[chat_id] = False
-            return
-        await asyncio.sleep(speed)
-        approved += 1
-        await status_msg.edit_text(f"🌠 Unveiling souls in {chat_id}: {approved}/{pending_count}")
-        logger.info(f"Approved pending request {approved}/{pending_count} in {chat_id}")
-    await status_msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
+    try:
+        for i in range(pending_count):
+            if stop_processing.get(chat_id, False):
+                await status_msg.edit_text(f"🛑 Paused at {approved}/{pending_count} souls!")
+                stop_processing[chat_id] = False
+                logger.info(f"Pending processing stopped at {approved}/{pending_count} for {chat_id}")
+                return
+            await asyncio.sleep(0.5)  # Flood-safe delay
+            approved += 1
+            await status_msg.edit_text(f"🌠 Unveiling souls in {chat_id}: {approved}/{pending_count}")
+            logger.info(f"Approved pending request {approved}/{pending_count} in {chat_id}")
+            if approved % 10 == 0:
+                await asyncio.sleep(2)  # Extra pause to avoid flood
+        await status_msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
+        logger.info(f"Finished approving {approved} pending requests in {chat_id}")
+    except asyncio.CancelledError:
+        await status_msg.edit_text(f"🛑 Stopped at {approved}/{pending_count} souls!")
+        logger.info(f"Pending processing cancelled at {approved}/{pending_count} for {chat_id}")
 
 async def error_handler(update: telegram.Update, context: CallbackContext) -> None:
     """Log errors."""
@@ -407,11 +337,11 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.FORWARDED & filters.ChatType.PRIVATE, handle_forwarded_message))
     application.add_handler(telegram.ext.CallbackQueryHandler(handle_callback))
 
-    # Error handler (fixed!)
+    # Error handler
     application.add_error_handler(error_handler)
 
     # Start the bot
-    logger.info("✨ The singularity ignites...")
+    logger.info("✨ The cosmic core activates...")
     application.run_polling()
 
 if __name__ == '__main__':
