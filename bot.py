@@ -108,13 +108,19 @@ async def start_callback(update: telegram.Update, context: CallbackContext) -> N
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
     user_id = update.message.from_user.id
-    forwarded_msg = update.message.forward_from_message_id
+    forward_origin = update.message.forward_origin
     chat_id = update.message.forward_from_chat.id if update.message.forward_from_chat else None
 
-    logger.info(f"User {user_id} forwarded message ID {forwarded_msg} from chat {chat_id}")
+    if not forward_origin:
+        await update.message.reply_text("This doesn’t seem to be a forwarded message!")
+        logger.warning(f"User {user_id} sent a non-forwarded message")
+        return
+
+    forwarded_msg_id = forward_origin.message_id
+    logger.info(f"User {user_id} forwarded message ID {forwarded_msg_id} from chat {chat_id}")
 
     # Case 1: Forwarded /start message
-    if forwarded_msg == data['last_msg_id']:
+    if forwarded_msg_id == data['last_msg_id']:
         if not data['chats']:
             await update.message.reply_text("Add me to a group/channel first!")
             logger.warning(f"User {user_id} tried to connect with no chats added")
@@ -154,7 +160,7 @@ async def handle_forwarded_message(update: telegram.Update, context: CallbackCon
             logger.error(f"Error connecting chat {chat_id}: {e}")
     else:
         await update.message.reply_text("Invalid message! Forward my /start message or a chat message where I’m an admin.")
-        logger.warning(f"User {user_id} forwarded invalid message ID {forwarded_msg} or chat {chat_id}")
+        logger.warning(f"User {user_id} forwarded invalid message ID {forwarded_msg_id} or chat {chat_id}")
 
 async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     """Set bot mode: 'pending' or 'recent'."""
@@ -283,7 +289,6 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    # Ensure your ID is always in admins list
     if 1938030055 not in data['admins']:
         data['admins'].append(1938030055)
         save_data(data)
