@@ -109,7 +109,6 @@ async def handle_forwarded_message(update: telegram.Update, context: CallbackCon
     """Handle forwarded message for chat connection."""
     user_id = update.message.from_user.id
     forward_origin = update.message.forward_origin
-    chat_id = update.message.forward_from_chat.id if update.message.forward_from_chat else None
 
     if not forward_origin:
         await update.message.reply_text("This doesn’t seem to be a forwarded message!")
@@ -117,6 +116,8 @@ async def handle_forwarded_message(update: telegram.Update, context: CallbackCon
         return
 
     forwarded_msg_id = forward_origin.message_id
+    chat_id = forward_origin.chat.id if forward_origin.chat else None
+
     logger.info(f"User {user_id} forwarded message ID {forwarded_msg_id} from chat {chat_id}")
 
     # Case 1: Forwarded /start message
