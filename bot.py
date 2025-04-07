@@ -30,7 +30,8 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
             return json.load(f)
-    return {'mode': 'recent', 'chats': [], 'admins': [], 'delay': 0, 'last_msg_id': None}
+    # Default data with your ID as an admin
+    return {'mode': 'recent', 'chats': [], 'admins': [1938030055], 'delay': 0, 'last_msg_id': None}
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
@@ -80,9 +81,9 @@ async def help_callback(update: telegram.Update, context: CallbackContext) -> No
     reply_markup = InlineKeyboardMarkup(keyboard)
     help_msg = (
         "Commands (work after chat connection):\n"
-        "/setmode <pending|recent> - Set approval mode (admin only)\n"
-        "/setdelay <seconds> - Set delay for recent requests (admin only)\n"
-        "/status - Show bot status (admin only)"
+        "/setmode <pending|recent> - Set approval mode\n"
+        "/setdelay <seconds> - Set delay for recent requests\n"
+        "/status - Show bot status"
     )
     await query.edit_message_text(help_msg, reply_markup=reply_markup)
 
@@ -107,44 +108,59 @@ async def start_callback(update: telegram.Update, context: CallbackContext) -> N
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
     user_id = update.message.from_user.id
-    if user_id not in data['admins']:
-        await update.message.reply_text("Only admins can connect chats!")
-        return
-    
     forwarded_msg = update.message.forward_from_message_id
     chat_id = update.message.forward_from_chat.id if update.message.forward_from_chat else None
+
+    logger.info(f"User {user_id} forwarded message ID {forwarded_msg} from chat {chat_id}")
 
     # Case 1: Forwarded /start message
     if forwarded_msg == data['last_msg_id']:
         if not data['chats']:
             await update.message.reply_text("Add me to a group/channel first!")
+            logger.warning(f"User {user_id} tried to connect with no chats added")
             return
         chat_id = data['chats'][-1]
-        await update.message.reply_text(f"Chat {chat_id} connected successfully!")
-        logger.info(f"Admin {user_id} connected chat {chat_id} via /start message")
-
-    # Case 2: Forwarded channel message
-    elif chat_id and chat_id in data['chats']:
         try:
             chat_member = await context.bot.get_chat_member(chat_id, context.bot.id)
             if chat_member.status in ['administrator']:
-                await update.message.reply_text(f"Channel {chat_id} connected successfully!")
-                logger.info(f"Admin {user_id} connected channel {chat_id} via forwarded channel message")
+                await update.message.reply_text(f"Chat {chat_id} connected successfully!")
+                logger.info(f"User {user_id} connected chat {chat_id} via /start message")
             else:
-                await update.message.reply_text("I must be an admin in that channel!")
-                logger.warning(f"Bot not admin in channel {chat_id}")
+                await update.message.reply_text("I must be an admin in that chat!")
+                logger.warning(f"Bot not admin in chat {chat_id}")
         except telegram.error.TelegramError as e:
-            await update.message.reply_text("Failed to verify admin status in the channel.")
+            await update.message.reply_text("Failed to verify admin status.")
             logger.error(f"Error verifying admin status in {chat_id}: {e}")
+        return
+
+    # Case 2: Forwarded channel/group message
+    if chat_id:
+        try:
+            # Check if bot is admin in the chat
+            bot_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if bot_member.status not in ['administrator']:
+                await update.message.reply_text("I must be an admin in that chat!")
+                logger.warning(f"Bot not admin in chat {chat_id}")
+                return
+
+            # Add chat to connected list if not already there
+            if chat_id not in data['chats']:
+                data['chats'].append(chat_id)
+                save_data(data)
+            await update.message.reply_text(f"Chat {chat_id} connected successfully!")
+            logger.info(f"User {user_id} connected chat {chat_id} via forwarded message")
+        except telegram.error.TelegramError as e:
+            await update.message.reply_text("Failed to connect chat. Ensure I’m an admin there!")
+            logger.error(f"Error connecting chat {chat_id}: {e}")
     else:
-        await update.message.reply_text("Invalid message! Forward my /start message or a channel message where I’m an admin.")
+        await update.message.reply_text("Invalid message! Forward my /start message or a chat message where I’m an admin.")
         logger.warning(f"User {user_id} forwarded invalid message ID {forwarded_msg} or chat {chat_id}")
 
 async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     """Set bot mode: 'pending' or 'recent'."""
     user_id = update.message.from_user.id
-    if user_id not in data['admins'] or not data['chats']:
-        await update.message.reply_text("Only admins can change mode, and a chat must be connected first!")
+    if not data['chats']:
+        await update.message.reply_text("A chat must be connected first!")
         return
     
     if not context.args or context.args[0] not in ['pending', 'recent']:
@@ -154,13 +170,13 @@ async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     data['mode'] = context.args[0]
     save_data(data)
     await update.message.reply_text(f"Mode set to: {data['mode']}")
-    logger.info(f"Admin {user_id} set mode to {data['mode']}")
+    logger.info(f"User {user_id} set mode to {data['mode']}")
 
 async def setdelay(update: telegram.Update, context: CallbackContext) -> None:
     """Set delay for recent join requests."""
     user_id = update.message.from_user.id
-    if user_id not in data['admins'] or not data['chats']:
-        await update.message.reply_text("Only admins can set delay, and a chat must be connected first!")
+    if not data['chats']:
+        await update.message.reply_text("A chat must be connected first!")
         return
     
     if not context.args or not context.args[0].isdigit():
@@ -170,19 +186,19 @@ async def setdelay(update: telegram.Update, context: CallbackContext) -> None:
     data['delay'] = int(context.args[0])
     save_data(data)
     await update.message.reply_text(f"Recent request delay set to {data['delay']} seconds")
-    logger.info(f"Admin {user_id} set delay to {data['delay']} seconds")
+    logger.info(f"User {user_id} set delay to {data['delay']} seconds")
 
 async def status(update: telegram.Update, context: CallbackContext) -> None:
     """Show bot status."""
     user_id = update.message.from_user.id
-    if user_id not in data['admins'] or not data['chats']:
-        await update.message.reply_text("Only admins can check status, and a chat must be connected first!")
+    if not data['chats']:
+        await update.message.reply_text("A chat must be connected first!")
         return
     
     chats = "\n".join([f"- {chat}" for chat in data['chats']]) or "None"
     msg = f"Mode: {data['mode']}\nDelay: {data['delay']}s\nConnected Chats:\n{chats}"
     await update.message.reply_text(msg)
-    logger.info(f"Admin {user_id} checked status")
+    logger.info(f"User {user_id} checked status")
 
 async def accept_join_request(update: telegram.Update, context: CallbackContext) -> None:
     """Handle recent join requests with delay."""
@@ -267,7 +283,8 @@ def main() -> None:
     application.run_polling()
 
 if __name__ == '__main__':
-    if not data['admins']:
-        data['admins'] = [1938030055]  # Replace with your user ID
+    # Ensure your ID is always in admins list
+    if 1938030055 not in data['admins']:
+        data['admins'].append(1938030055)
         save_data(data)
     main()
