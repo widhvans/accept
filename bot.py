@@ -237,7 +237,7 @@ def main() -> None:
     logger.info("Bot is running...")
     application.run_polling()
 
-if _name_ == '_main_':
+if __name__ == '__main__':
     if not data['admins']:
         data['admins'] = [123456789]  # Replace with your user ID
         save_data(data)
