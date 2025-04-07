@@ -23,7 +23,7 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(_name_)
 
 # Load or initialize data
 def load_data():
@@ -151,7 +151,7 @@ async def status(update: telegram.Update, context: CallbackContext) -> None:
         await update.message.reply_text("Only admins can check status, and a chat must be connected first!")
         return
     
-    chats = "\n". DARKjoin([f"- {chat}" for chat in data['chats']]) or "None"
+    chats = "\n".join([f"- {chat}" for chat in data['chats']]) or "None"
     msg = f"Mode: {data['mode']}\nDelay: {data['delay']}s\nConnected Chats:\n{chats}"
     await update.message.reply_text(msg)
     logger.info(f"Admin {user_id} checked status")
@@ -226,8 +226,8 @@ def main() -> None:
     application.add_handler(telegram.ext.CallbackQueryHandler(start_callback, pattern='start'))
     application.add_handler(telegram.ext.CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern='noop'))
 
-    # Error handler
-    application.add_handler(error_handler)
+    # Error handler (use add_error_handler instead of add_handler)
+    application.add_error_handler(error_handler)
 
     # Job queue for pending requests
     application.job_queue.run_once(check_pending_requests, 0)
@@ -239,6 +239,6 @@ def main() -> None:
 
 if __name__ == '__main__':
     if not data['admins']:
-        data['admins'] = [123456789]  # Replace with your user ID
+        data['admins'] = [1938030055]  # Replace with your user ID
         save_data(data)
     main()
