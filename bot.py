@@ -1,6 +1,6 @@
 import telegram
 from telegram.ext import Application, ChatJoinRequestHandler, CommandHandler, ChatMemberHandler, MessageHandler, CallbackContext
-from telegram.ext import filters  # Import filters separately
+from telegram.ext import filters
 import logging
 import asyncio
 import json
@@ -30,7 +30,7 @@ def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
             return json.load(f)
-    return {'mode': 'recent', 'chats': [], 'admins': [], 'delay': 0, 'last_msg_id': None}
+    return {'mode': 'recent', 'chats':-': [], 'admins': [], 'delay': 0, 'last_msg_id': None}
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
@@ -44,17 +44,28 @@ async def start(update: telegram.Update, context: CallbackContext) -> None:
     bot_username = context.bot.username
     keyboard = [
         [InlineKeyboardButton("Add to Group/Channel", url=f"https://t.me/{bot_username}?startgroup=true")],
-        [InlineKeyboardButton("Help (Commands)", callback_data='help')]
+        [InlineKeyboardButton("Connect Your Channel", callback_data='connect_channel')],
+        [InlineKeyboardButton("Help", callback_data='help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_msg = (
         f"Hello, {user.first_name}! I’m {context.bot.first_name}.\n"
-        "To connect a group/channel, forward this message to me in private chat after adding me as an admin."
+        "To connect a group/channel, forward this message to me in private chat after adding me as an admin.\n"
+        "Or use 'Connect Your Channel' to link a channel by forwarding its last message."
     )
     msg = await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
-    data['last_msg_id'] = msg.message_id  # Store last message ID
+    data['last_msg_id'] = msg.message_id
     save_data(data)
     logger.info(f"User {user.id} sent /start, last_msg_id set to {msg.message_id}")
+
+async def connect_channel_callback(update: telegram.Update, context: CallbackContext) -> None:
+    """Prompt user to forward channel message."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "Please forward the last message from your channel to me in private chat to connect it.\n"
+        "I must be an admin in that channel."
+    )
 
 async def help_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Show help menu with all commands."""
@@ -64,7 +75,7 @@ async def help_callback(update: telegram.Update, context: CallbackContext) -> No
         [InlineKeyboardButton("/setmode <pending|recent>", callback_data='noop')],
         [InlineKeyboardButton("/setdelay <seconds>", callback_data='noop')],
         [InlineKeyboardButton("/status", callback_data='noop')],
-        [InlineKeyboardButton("Back", callback_data='start')]
+        [InlineKeyboardButton("Back to Start", callback_data='start')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     help_msg = (
@@ -82,12 +93,14 @@ async def start_callback(update: telegram.Update, context: CallbackContext) -> N
     bot_username = context.bot.username
     keyboard = [
         [InlineKeyboardButton("Add to Group/Channel", url=f"https://t.me/{bot_username}?startgroup=true")],
-        [InlineKeyboardButton("Help (Commands)", callback_data='help')]
+        [InlineKeyboardButton("Connect Your Channel", callback_data='connect_channel')],
+        [InlineKeyboardButton("Help", callback_data='help')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     welcome_msg = (
         f"Welcome back! I’m {context.bot.first_name}.\n"
-        "Forward this message to me in private to connect a group/channel."
+        "Forward this message to me in private to connect a group/channel,\n"
+        "or use 'Connect Your Channel' to link a channel."
     )
     await query.edit_message_text(welcome_msg, reply_markup=reply_markup)
 
@@ -99,18 +112,33 @@ async def handle_forwarded_message(update: telegram.Update, context: CallbackCon
         return
     
     forwarded_msg = update.message.forward_from_message_id
-    if forwarded_msg != data['last_msg_id']:
-        await update.message.reply_text("Please forward my last message (from /start) to connect a chat!")
-        logger.warning(f"User {user_id} forwarded incorrect message ID {forwarded_msg}, expected {data['last_msg_id']}")
-        return
-    
-    if not data['chats']:
-        await update.message.reply_text("Add me to a group/channel first!")
-        return
-    
-    chat_id = data['chats'][-1]  # Last added chat
-    await update.message.reply_text(f"Chat {chat_id} connected successfully!")
-    logger.info(f"Admin {user_id} connected chat {chat_id} via forwarded message")
+    chat_id = update.message.forward_from_chat.id if update.message.forward_from_chat else None
+
+    # Case 1: Forwarded /start message
+    if forwarded_msg == data['last_msg_id']:
+        if not data['chats']:
+            await update.message.reply_text("Add me to a group/channel first!")
+            return
+        chat_id = data['chats'][-1]
+        await update.message.reply_text(f"Chat {chat_id} connected successfully!")
+        logger.info(f"Admin {user_id} connected chat {chat_id} via /start message")
+
+    # Case 2: Forwarded channel message
+    elif chat_id and chat_id in data['chats']:
+        try:
+            chat_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if chat_member.status in ['administrator']:
+                await update.message.reply_text(f"Channel {chat_id} connected successfully!")
+                logger.info(f"Admin {user_id} connected channel {chat_id} via forwarded channel message")
+            else:
+                await update.message.reply_text("I must be an admin in that channel!")
+                logger.warning(f"Bot not admin in channel {chat_id}")
+        except telegram.error.TelegramError as e:
+            await update.message.reply_text("Failed to verify admin status in the channel.")
+            logger.error(f"Error verifying admin status in {chat_id}: {e}")
+    else:
+        await update.message.reply_text("Invalid message! Forward my /start message or a channel message where I’m an admin.")
+        logger.warning(f"User {user_id} forwarded invalid message ID {forwarded_msg} or chat {chat_id}")
 
 async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     """Set bot mode: 'pending' or 'recent'."""
@@ -222,11 +250,12 @@ def main() -> None:
     application.add_handler(ChatJoinRequestHandler(accept_join_request))
     application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     application.add_handler(MessageHandler(filters.FORWARDED & filters.ChatType.PRIVATE, handle_forwarded_message))
+    application.add_handler(telegram.ext.CallbackQueryHandler(connect_channel_callback, pattern='connect_channel'))
     application.add_handler(telegram.ext.CallbackQueryHandler(help_callback, pattern='help'))
     application.add_handler(telegram.ext.CallbackQueryHandler(start_callback, pattern='start'))
     application.add_handler(telegram.ext.CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern='noop'))
 
-    # Error handler (use add_error_handler instead of add_handler)
+    # Error handler
     application.add_error_handler(error_handler)
 
     # Job queue for pending requests
