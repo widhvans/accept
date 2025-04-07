@@ -18,7 +18,7 @@ LOG_FILE = 'bot.log'
 # Set up logging to file and console with DEBUG level
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.DEBUG,  # Changed to DEBUG for detailed tracing
+    level=logging.DEBUG,
     handlers=[
         logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
@@ -133,46 +133,61 @@ async def mode_selection(update: telegram.Update, context: CallbackContext, chat
         "- Magic Wand: Toggle modes with a flick!",
         reply_markup=reply_markup
     )
-    logger.debug(f"Displayed mode selection for chat {chat_id} to user {update.message.from_user.id}")
+    logger.debug(f"Displayed mode selection for chat {chat_id} to user {update.message.from_user.id}, buttons: {keyboard}")
 
 async def mode_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Handle mode selection."""
     query = update.callback_query
     await query.answer()
-    mode, chat_id = query.data.split('_')[1], int(query.data.split('_')[2])
-    data['mode'] = mode
-    save_data(data)
-    await query.edit_message_text(
-        f"✨ {mode.capitalize()} Mode conjured for chat {chat_id}!\n"
-        f"{'The past awakens...' if mode == 'pending' else 'The present ignites!'}"
-    )
-    logger.info(f"User {query.from_user.id} set mode to {mode} for chat {chat_id}")
-    if mode == 'pending':
-        await check_pending_requests(context, chat_id, query.from_user.id)
+    logger.debug(f"Received callback query from user {query.from_user.id}: {query.data}")
+    try:
+        mode, chat_id = query.data.split('_')[1], int(query.data.split('_')[2])
+        data['mode'] = mode
+        save_data(data)
+        await query.edit_message_text(
+            f"✨ {mode.capitalize()} Mode conjured for chat {chat_id}!\n"
+            f"{'The past awakens...' if mode == 'pending' else 'The present ignites!'}"
+        )
+        logger.info(f"User {query.from_user.id} set mode to {mode} for chat {chat_id}")
+        if mode == 'pending':
+            await check_pending_requests(context, chat_id, query.from_user.id)
+    except (IndexError, ValueError) as e:
+        logger.error(f"Error parsing callback data {query.data}: {e}")
+        await query.edit_message_text("💥 The spell misfired! Try again, seeker.")
 
 async def wand_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Toggle mode with a magic wand."""
     query = update.callback_query
     await query.answer()
-    chat_id = int(query.data.split('_')[1])
-    data['mode'] = 'recent' if data['mode'] == 'pending' else 'pending'
-    save_data(data)
-    await query.edit_message_text(f"🪄 Wand waved! Mode switched to {data['mode']} for {chat_id}!")
-    logger.info(f"User {query.from_user.id} toggled mode to {data['mode']} for chat {chat_id}")
+    logger.debug(f"Received wand callback from user {query.from_user.id}: {query.data}")
+    try:
+        chat_id = int(query.data.split('_')[1])
+        data['mode'] = 'recent' if data['mode'] == 'pending' else 'pending'
+        save_data(data)
+        await query.edit_message_text(f"🪄 Wand waved! Mode switched to {data['mode']} for {chat_id}!")
+        logger.info(f"User {query.from_user.id} toggled mode to {data['mode']} for chat {chat_id}")
+    except (IndexError, ValueError) as e:
+        logger.error(f"Error parsing wand callback data {query.data}: {e}")
+        await query.edit_message_text("💥 Wand malfunction! Try again.")
 
 async def stop_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Stop request processing."""
     query = update.callback_query
     await query.answer()
+    logger.debug(f"Received stop callback from user {query.from_user.id}: {query.data}")
     chat_id_str = query.data.split('_')[1] if '_' in query.data else None
-    chat_id = int(chat_id_str) if chat_id_str else None
-    if chat_id:
-        stop_processing[chat_id] = True
-        await query.edit_message_text(f"🛑 The spell over {chat_id} has been broken!")
-        logger.info(f"User {query.from_user.id} stopped processing for chat {chat_id}")
-    else:
-        await query.edit_message_text("🛑 No chat specified to stop!")
-        logger.warning(f"User {query.from_user.id} triggered stop with no chat ID")
+    try:
+        chat_id = int(chat_id_str) if chat_id_str else None
+        if chat_id:
+            stop_processing[chat_id] = True
+            await query.edit_message_text(f"🛑 The spell over {chat_id} has been broken!")
+            logger.info(f"User {query.from_user.id} stopped processing for chat {chat_id}")
+        else:
+            await query.edit_message_text("🛑 No chat specified to stop!")
+            logger.warning(f"User {query.from_user.id} triggered stop with no chat ID")
+    except ValueError as e:
+        logger.error(f"Error parsing stop callback data {query.data}: {e}")
+        await query.edit_message_text("💥 Stop spell failed! Try again.")
 
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
@@ -340,7 +355,7 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
         if approved % 10 == 0:
             await asyncio.sleep(2)  # Pause for dramatic effect
     
-    await status-msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
+    await status_msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
     logger.info(f"Finished approving {approved} pending requests in chat {chat_id}")
 
 async def error_handler(update: telegram.Update, context: CallbackContext) -> None:
