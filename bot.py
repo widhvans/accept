@@ -15,10 +15,10 @@ TOKEN = '7320891454:AAHp3AAIZK2RKIkWyYIByB_fSEq9Xuk9-bk'
 DATA_FILE = 'chats.json'
 LOG_FILE = 'bot.log'
 
-# Set up logging to file and console
+# Set up logging to file and console with DEBUG level
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
+    level=logging.DEBUG,  # Changed to DEBUG for detailed tracing
     handlers=[
         logging.FileHandler(LOG_FILE),
         logging.StreamHandler()
@@ -34,12 +34,17 @@ pending_counts: Dict[int, int] = {}    # Simulated pending counts per chat
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, 'r') as f:
-            return json.load(f)
-    return {'mode': None, 'chats': [], 'admins': [1938030055], 'delay': 0, 'last_msg_id': None}
+            data = json.load(f)
+            logger.debug(f"Loaded data from {DATA_FILE}: {data}")
+            return data
+    default_data = {'mode': None, 'chats': [], 'admins': [1938030055], 'delay': 0, 'last_msg_id': None}
+    logger.debug(f"Initialized default data: {default_data}")
+    return default_data
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f)
+    logger.debug(f"Saved data to {DATA_FILE}: {data}")
 
 data = load_data()
 
@@ -71,6 +76,7 @@ async def connect_channel_callback(update: telegram.Update, context: CallbackCon
         "🔮 Weave your spell! Forward the last message from your channel to me in private.\n"
         "I must wield admin powers there!"
     )
+    logger.debug(f"User {query.from_user.id} triggered connect_channel_callback")
 
 async def help_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Show help menu with all commands."""
@@ -90,6 +96,7 @@ async def help_callback(update: telegram.Update, context: CallbackContext) -> No
         "/status - Peer into the arcane"
     )
     await query.edit_message_text(help_msg, reply_markup=reply_markup)
+    logger.debug(f"User {query.from_user.id} triggered help_callback")
 
 async def start_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Return to start menu."""
@@ -108,6 +115,7 @@ async def start_callback(update: telegram.Update, context: CallbackContext) -> N
         "or summon a channel with 'Connect Your Channel'!"
     )
     await query.edit_message_text(welcome_msg, reply_markup=reply_markup)
+    logger.debug(f"User {query.from_user.id} triggered start_callback")
 
 async def mode_selection(update: telegram.Update, context: CallbackContext, chat_id: int) -> None:
     """Show mode selection after connecting a chat."""
@@ -125,20 +133,22 @@ async def mode_selection(update: telegram.Update, context: CallbackContext, chat
         "- Magic Wand: Toggle modes with a flick!",
         reply_markup=reply_markup
     )
+    logger.debug(f"Displayed mode selection for chat {chat_id} to user {update.message.from_user.id}")
 
 async def mode_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Handle mode selection."""
     query = update.callback_query
     await query.answer()
-    mode, chat_id = query.data.split('')[1], int(query.data.split('')[2])
+    mode, chat_id = query.data.split('_')[1], int(query.data.split('_')[2])
     data['mode'] = mode
     save_data(data)
     await query.edit_message_text(
         f"✨ {mode.capitalize()} Mode conjured for chat {chat_id}!\n"
         f"{'The past awakens...' if mode == 'pending' else 'The present ignites!'}"
     )
+    logger.info(f"User {query.from_user.id} set mode to {mode} for chat {chat_id}")
     if mode == 'pending':
-        await check_pending_requests(context, chat_id, update.message.chat_id)
+        await check_pending_requests(context, chat_id, query.from_user.id)
 
 async def wand_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Toggle mode with a magic wand."""
@@ -148,17 +158,21 @@ async def wand_callback(update: telegram.Update, context: CallbackContext) -> No
     data['mode'] = 'recent' if data['mode'] == 'pending' else 'pending'
     save_data(data)
     await query.edit_message_text(f"🪄 Wand waved! Mode switched to {data['mode']} for {chat_id}!")
+    logger.info(f"User {query.from_user.id} toggled mode to {data['mode']} for chat {chat_id}")
 
 async def stop_callback(update: telegram.Update, context: CallbackContext) -> None:
     """Stop request processing."""
     query = update.callback_query
     await query.answer()
-    chat_id = int(query.data.split('')[1]) if '' in query.data else None
+    chat_id_str = query.data.split('_')[1] if '_' in query.data else None
+    chat_id = int(chat_id_str) if chat_id_str else None
     if chat_id:
         stop_processing[chat_id] = True
         await query.edit_message_text(f"🛑 The spell over {chat_id} has been broken!")
+        logger.info(f"User {query.from_user.id} stopped processing for chat {chat_id}")
     else:
         await query.edit_message_text("🛑 No chat specified to stop!")
+        logger.warning(f"User {query.from_user.id} triggered stop with no chat ID")
 
 async def handle_forwarded_message(update: telegram.Update, context: CallbackContext) -> None:
     """Handle forwarded message for chat connection."""
@@ -205,10 +219,12 @@ async def setmode(update: telegram.Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if not data['chats']:
         await update.message.reply_text("🌑 Bind a chat first, seeker!")
+        logger.warning(f"User {user_id} tried /setmode with no chats")
         return
     
     if not context.args or context.args[0] not in ['pending', 'recent']:
         await update.message.reply_text("✨ Whisper: /setmode <pending|recent>")
+        logger.warning(f"User {user_id} used invalid /setmode syntax: {context.args}")
         return
     
     data['mode'] = context.args[0]
@@ -221,10 +237,12 @@ async def setdelay(update: telegram.Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if not data['chats']:
         await update.message.reply_text("🌑 Bind a chat first, seeker!")
+        logger.warning(f"User {user_id} tried /setdelay with no chats")
         return
     
     if not context.args or not context.args[0].isdigit():
         await update.message.reply_text("✨ Whisper: /setdelay <seconds>")
+        logger.warning(f"User {user_id} used invalid /setdelay syntax: {context.args}")
         return
     
     data['delay'] = int(context.args[0])
@@ -237,16 +255,18 @@ async def status(update: telegram.Update, context: CallbackContext) -> None:
     user_id = update.message.from_user.id
     if not data['chats']:
         await update.message.reply_text("🌑 No realms bound yet!")
+        logger.warning(f"User {user_id} checked status with no chats")
         return
     
     chats = "\n".join([f"- {chat} ({pending_counts.get(chat, 0)} souls await)" for chat in data['chats']]) or "None"
     msg = f"🌌 The Oracle Speaks:\nMode: {data['mode'] or 'Unchosen'}\n⏳ Delay: {data['delay']}s\n✨ Realms:\n{chats}"
     await update.message.reply_text(msg)
-    logger.info(f"User {user_id} checked status")
+    logger.info(f"User {user_id} checked status: {msg}")
 
 async def accept_join_request(update: telegram.Update, context: CallbackContext) -> None:
     """Handle recent join requests with stop button."""
     if data['mode'] != 'recent' or not data['chats']:
+        logger.debug(f"Recent mode not active or no chats: mode={data['mode']}, chats={data['chats']}")
         return
     
     join_request = update.chat_join_request
@@ -257,11 +277,13 @@ async def accept_join_request(update: telegram.Update, context: CallbackContext)
     keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     status_msg = await context.bot.send_message(chat_id=user_id, text=f"🌟 Opening the gates to {chat_id}...", reply_markup=reply_markup)
+    logger.debug(f"Sent approval message to {user_id} for chat {chat_id}")
     
     await asyncio.sleep(data['delay'])
     if stop_processing.get(chat_id, False):
         await status_msg.edit_text("🛑 Gates sealed by your command!")
         stop_processing[chat_id] = False
+        logger.info(f"Approval stopped for user {user_id} in chat {chat_id}")
         return
     
     try:
@@ -285,6 +307,7 @@ async def handle_chat_member(update: telegram.Update, context: CallbackContext) 
 async def check_pending_requests(context: CallbackContext, chat_id: int, admin_chat_id: int) -> None:
     """Process pending requests with stop button and real count placeholder."""
     if data['mode'] != 'pending' or chat_id not in data['chats']:
+        logger.debug(f"Pending mode not active or chat not bound: mode={data['mode']}, chat={chat_id}")
         return
     
     # Simulate pending count (replace with real API call when available)
@@ -293,18 +316,21 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
     
     if pending_count == 0:
         await context.bot.send_message(chat_id=admin_chat_id, text=f"🌑 No souls await in {chat_id}!")
+        logger.info(f"No pending requests in chat {chat_id}")
         return
     
     stop_processing[chat_id] = False
     keyboard = [[InlineKeyboardButton("Stop", callback_data=f'stop_{chat_id}')]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     status_msg = await context.bot.send_message(chat_id=admin_chat_id, text=f"🌠 Unveiling {pending_count} souls in {chat_id}...", reply_markup=reply_markup)
+    logger.debug(f"Started pending request processing for chat {chat_id}")
     
     approved = 0
     for i in range(pending_count):
         if stop_processing.get(chat_id, False):
             await status_msg.edit_text(f"🛑 Paused at {approved}/{pending_count} souls in {chat_id}!")
             stop_processing[chat_id] = False
+            logger.info(f"Pending request processing stopped at {approved}/{pending_count} for chat {chat_id}")
             return
         await asyncio.sleep(0.5)  # 2 requests/second
         approved += 1
@@ -314,7 +340,7 @@ async def check_pending_requests(context: CallbackContext, chat_id: int, admin_c
         if approved % 10 == 0:
             await asyncio.sleep(2)  # Pause for dramatic effect
     
-    await status_msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
+    await status-msg.edit_text(f"✨ All {approved} souls unveiled in {chat_id}!")
     logger.info(f"Finished approving {approved} pending requests in chat {chat_id}")
 
 async def error_handler(update: telegram.Update, context: CallbackContext) -> None:
@@ -343,9 +369,6 @@ def main() -> None:
 
     # Error handler
     application.add_error_handler(error_handler)
-
-    # Job queue for periodic checks (disabled until real pending API exists)
-    # application.job_queue.run_repeating(check_pending_requests, interval=3600)
 
     # Start the bot
     logger.info("✨ The arcane awakens...")
