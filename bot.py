@@ -332,13 +332,13 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status))
     application.add_handler(ChatJoinRequestHandler(accept_join_request))
     application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
-    application.add_handler(MessageHandler(filters.FORWARD & filters.ChatType.PRIVATE, handle_forwarded_message))
+    application.add_handler(MessageHandler(filters.FORWARDED & filters.ChatType.PRIVATE, handle_forwarded_message))
     application.add_handler(telegram.ext.CallbackQueryHandler(connect_channel_callback, pattern='connect_channel'))
     application.add_handler(telegram.ext.CallbackQueryHandler(help_callback, pattern='help'))
     application.add_handler(telegram.ext.CallbackQueryHandler(start_callback, pattern='start'))
     application.add_handler(telegram.ext.CallbackQueryHandler(mode_callback, pattern=r'mode_(pending|recent)_\d+'))
     application.add_handler(telegram.ext.CallbackQueryHandler(wand_callback, pattern=r'wand_\d+'))
-    application.add_handler(telegram.ext.CallbackQueryHandler(stop ARRcallback, pattern=r'stop(_\d+)?'))
+    application.add_handler(telegram.ext.CallbackQueryHandler(stop_callback, pattern=r'stop(_\d+)?'))
     application.add_handler(telegram.ext.CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern='noop'))
 
     # Error handler
