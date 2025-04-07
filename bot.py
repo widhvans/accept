@@ -1,5 +1,6 @@
 import telegram
-from telegram.ext import Application, ChatJoinRequestHandler, CommandHandler, ChatMemberHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, ChatJoinRequestHandler, CommandHandler, ChatMemberHandler, MessageHandler, CallbackContext
+from telegram.ext import filters  # Import filters separately
 import logging
 import asyncio
 import json
@@ -103,7 +104,6 @@ async def handle_forwarded_message(update: telegram.Update, context: CallbackCon
         logger.warning(f"User {user_id} forwarded incorrect message ID {forwarded_msg}, expected {data['last_msg_id']}")
         return
     
-    # Assume the chat to connect is the last one the bot was added to
     if not data['chats']:
         await update.message.reply_text("Add me to a group/channel first!")
         return
@@ -221,7 +221,7 @@ def main() -> None:
     application.add_handler(CommandHandler("status", status))
     application.add_handler(ChatJoinRequestHandler(accept_join_request))
     application.add_handler(ChatMemberHandler(handle_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
-    application.add_handler(MessageHandler(Filters.forwarded & Filters.private, handle_forwarded_message))
+    application.add_handler(MessageHandler(filters.FORWARDED & filters.PRIVATE, handle_forwarded_message))
     application.add_handler(telegram.ext.CallbackQueryHandler(help_callback, pattern='help'))
     application.add_handler(telegram.ext.CallbackQueryHandler(start_callback, pattern='start'))
     application.add_handler(telegram.ext.CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern='noop'))
